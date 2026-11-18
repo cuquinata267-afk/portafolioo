@@ -1,0 +1,26 @@
+limit_req_zone $binary_remote_addr zone=contact:10m rate=5r/m;
+server {
+    listen 80;
+    server_name {{ domain }};
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name {{ domain }};
+    ssl_certificate /etc/nginx/ssl/origin.pem;
+    ssl_certificate_key /etc/nginx/ssl/origin.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 32k;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    location = /api/contact {
+        limit_req zone=contact burst=3 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}

@@ -1,0 +1,157 @@
+- name: Configurar Ubuntu y desplegar el portafolio
+  hosts: portfolio
+  become: true
+  gather_facts: false
+  vars:
+    domain: "{{ lookup('env', 'PORTFOLIO_DOMAIN') }}"
+    docker_user: "{{ lookup('env', 'DOCKERHUB_USERNAME') }}"
+    image_tag: "{{ lookup('env', 'IMAGE_TAG') }}"
+  pre_tasks:
+    - name: Esperar SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+    - name: Validar Ubuntu 24.04 y dominio
+      ansible.builtin.setup:
+    - name: Comprobar requisitos
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version == '24.04'
+          - domain is match('^[a-zA-Z0-9][a-zA-Z0-9.-]+[a-zA-Z0-9]$')
+  tasks:
+    - name: Esperar a cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+    - name: Instalar Docker, Compose, Git, Nginx y firewall
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, git, nginx, iptables, ca-certificates]
+        update_cache: true
+        state: present
+    - name: Habilitar Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+    - name: Crear directorios privados
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0700'
+      loop: [/opt/portfolio, /etc/nginx/ssl]
+    - name: Instalar certificados Cloudflare Origin
+      ansible.builtin.copy:
+        content: "{{ lookup('env', item.secret) }}"
+        dest: "{{ item.path }}"
+        mode: '0600'
+      loop:
+        - {secret: CLOUDFLARE_ORIGIN_CERT, path: /etc/nginx/ssl/origin.pem}
+        - {secret: CLOUDFLARE_ORIGIN_KEY, path: /etc/nginx/ssl/origin.key}
+      no_log: true
+      notify: Recargar nginx
+    - name: Copiar Compose de producción
+      ansible.builtin.copy:
+        src: ../../compose.production.yml
+        dest: /opt/portfolio/compose.yml
+        mode: '0600'
+    - name: Escribir variables de producción
+      ansible.builtin.copy:
+        content: |
+          DOCKERHUB_USERNAME={{ docker_user }}
+          IMAGE_TAG={{ image_tag }}
+          DATABASE_URL='{{ lookup('env', 'DATABASE_URL') }}'
+        dest: /opt/portfolio/.env
+        mode: '0600'
+      no_log: true
+    - name: Descargar imágenes públicas versionadas
+      ansible.builtin.command: docker compose pull
+      args:
+        chdir: /opt/portfolio
+      changed_when: true
+    - name: Aplicar migración aditiva
+      ansible.builtin.command: docker compose run --rm backend python -m app.migrate
+      args:
+        chdir: /opt/portfolio
+      changed_when: true
+    - name: Actualizar servicios y esperar salud
+      ansible.builtin.command: docker compose up -d --wait --wait-timeout 120
+      args:
+        chdir: /opt/portfolio
+      changed_when: true
+    - name: Configurar proxy TLS
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-enabled/portfolio
+        mode: '0644'
+      notify: Recargar nginx
+    - name: Quitar sitio por defecto
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Recargar nginx
+    - name: Instalar reglas iptables
+      ansible.builtin.template:
+        src: firewall.sh.j2
+        dest: /usr/local/sbin/portfolio-firewall
+        mode: '0755'
+    - name: Persistir firewall con systemd
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/portfolio-firewall.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Portfolio firewall
+          After=network-pre.target
+          Before=nginx.service
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/portfolio-firewall
+          RemainAfterExit=yes
+          [Install]
+          WantedBy=multi-user.target
+    - name: Aplicar firewall
+      ansible.builtin.systemd:
+        name: portfolio-firewall
+        daemon_reload: true
+        enabled: true
+        state: restarted
+    - name: Aplicar configuración web
+      ansible.builtin.meta: flush_handlers
+    - name: Verificar API local
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/api/health
+        status_code: 200
+    - name: Consultar registro DNS existente
+      ansible.builtin.uri:
+        url: "https://api.cloudflare.com/client/v4/zones/{{ lookup('env', 'CLOUDFLARE_ZONE_ID') }}/dns_records?type=A&name={{ domain }}"
+        headers:
+          Authorization: "Bearer {{ lookup('env', 'CLOUDFLARE_API_TOKEN') }}"
+      register: dns
+      delegate_to: localhost
+      become: false
+      no_log: true
+    - name: Crear o actualizar DNS proxied
+      ansible.builtin.uri:
+        url: "https://api.cloudflare.com/client/v4/zones/{{ lookup('env', 'CLOUDFLARE_ZONE_ID') }}/dns_records{{ '/' + dns.json.result[0].id if dns.json.result | length > 0 else '' }}"
+        method: "{{ 'PUT' if dns.json.result | length > 0 else 'POST' }}"
+        headers:
+          Authorization: "Bearer {{ lookup('env', 'CLOUDFLARE_API_TOKEN') }}"
+        body_format: json
+        body:
+          type: A
+          name: "{{ domain }}"
+          content: "{{ ansible_host }}"
+          ttl: 1
+          proxied: true
+      delegate_to: localhost
+      become: false
+      no_log: true
+  handlers:
+    - name: Recargar nginx
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      notify: Reiniciar nginx
+    - name: Reiniciar nginx
+      ansible.builtin.service:
+        name: nginx
+        enabled: true
+        state: restarted

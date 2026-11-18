@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+# Cadena propia; conserva las reglas de Docker y de la imagen OCI.
+iptables -N PORTFOLIO_INPUT 2>/dev/null || true
+iptables -F PORTFOLIO_INPUT
+iptables -A PORTFOLIO_INPUT -i lo -j ACCEPT
+iptables -A PORTFOLIO_INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A PORTFOLIO_INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A PORTFOLIO_INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
+iptables -A PORTFOLIO_INPUT -p icmp -j ACCEPT
+iptables -A PORTFOLIO_INPUT -j DROP
+iptables -C INPUT -j PORTFOLIO_INPUT 2>/dev/null || iptables -I INPUT 1 -j PORTFOLIO_INPUT
+# SSH se limita adicionalmente a /32 desde la security list de OCI.
