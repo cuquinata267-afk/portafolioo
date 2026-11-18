@@ -1,0 +1,13 @@
+# Uso: docker compose --env-file .env.supabase -f compose.supabase.yml ...
+services:
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Ejecuta scripts/configurar-supabase.ps1 primero}
+      AUTO_CREATE_TABLES: "false"
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [backend]
+    restart: unless-stopped
