@@ -83,7 +83,7 @@ resource "oci_core_instance" "web" {
   shape = "VM.Standard.A1.Flex"
   shape_config {
     ocpus = 1
-    memory_in_gbs = 6
+    memory_in_gbs = 2
   }
   source_details {
     source_type = "image"
