@@ -4,7 +4,7 @@
 
 - dev: pruebas unitarias, integración y E2E.
 - main: las mismas pruebas, imágenes web/API para AMD64 y ARM64 etiquetadas con el commit, Terraform, Ansible y comprobación HTTP o HTTPS según la configuración.
-- Terraform: VCN, subnet pública, gateway, rutas, reglas 22/80/443, VM Ubuntu con imagen configurable, A1 de 1 OCPU/6 GB/50 GB.
+- Terraform: VCN, subnet pública, gateway, rutas, reglas 22/80/443, VM Ubuntu con imagen configurable, A1 de 1 OCPU/2 GB/50 GB.
 - Ansible: Docker, Compose, Git, Nginx, iptables persistentes; migración inicial de tablas; despliegue con Supabase; certificados Origin; registro DNS de Cloudflare.
 - Estado remoto Terraform: backend OCI con bloqueo. El bucket se prepara una vez antes del pipeline.
 - Producción usa Supabase externo. Compose local mantiene PostgreSQL para desarrollo y E2E.
