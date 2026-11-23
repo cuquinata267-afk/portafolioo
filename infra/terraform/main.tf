@@ -102,11 +102,15 @@ resource "oci_core_instance" "web" {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(join("\n", ["#cloud-config", yamlencode({
       ssh_keys = {
-        ed25519_private = var.ssh_host_private_key
+        ed25519_private = format("%s\n", trimspace(replace(var.ssh_host_private_key, "\r\n", "\n")))
         ed25519_public = var.ssh_host_public_key
       }
     })]))
   }
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+    # OCI only accepts user_data at launch; repair existing hosts in place.
+    ignore_changes = [metadata["user_data"]]
+  }
 }
 output "public_ip" { value = oci_core_instance.web.public_ip }

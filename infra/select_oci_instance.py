@@ -15,7 +15,7 @@ TRIAL_SHAPES = ('VM.Standard.E4.Flex', 'VM.Standard.E5.Flex', 'VM.Standard3.Flex
 UBUNTU_AMD64 = re.compile(r'^Canonical-Ubuntu-24\.04-\d{4}\.\d{2}\.\d{2}-\d+$')
 
 
-def current_instance():
+def current_instance(compute):
     # El estado contiene datos sensibles. Capturar JSON sin escribirlo en el log.
     output = subprocess.check_output(
         ['terraform', f'-chdir={TERRAFORM_DIR}', 'show', '-json'], encoding='utf-8',
@@ -24,13 +24,17 @@ def current_instance():
     for resource in resources:
         if resource['address'] == INSTANCE_ADDRESS:
             values = resource['values']
+            instance = compute.get_instance(values['id']).data
+            if instance.lifecycle_state == 'TERMINATING':
+                raise SystemExit('La VM anterior sigue terminando. Espera el estado TERMINATED antes de desplegar.')
+            if instance.lifecycle_state == 'TERMINATED':
+                print('La VM anterior está terminada. Se seleccionará capacidad para una nueva.')
+                return None
             return values['shape'], values['source_details'][0]['source_id']
     return None
 
 
-def select_trial_instance(settings):
-    config = oci.config.from_file()
-    compute = oci.core.ComputeClient(config, timeout=(10, 30))
+def select_trial_instance(compute, tenancy_id, settings):
     models = oci.core.models
     availability_domain = settings['availability_domain']
     offered_shapes = oci.pagination.list_call_get_all_results(
@@ -42,7 +46,7 @@ def select_trial_instance(settings):
         raise SystemExit(f'OCI no ofrece las formas de prueba configuradas en {availability_domain}.')
 
     report = compute.create_compute_capacity_report(models.CreateComputeCapacityReportDetails(
-        compartment_id=config['tenancy'],
+        compartment_id=tenancy_id,
         availability_domain=availability_domain,
         shape_availabilities=[
             models.CreateCapacityReportShapeAvailabilityDetails(
@@ -86,21 +90,23 @@ def main():
 
     path = TERRAFORM_DIR / 'ci.auto.tfvars.json'
     settings = json.loads(path.read_text(encoding='utf-8'))
-    instance = current_instance()
-    if instance:
-        print(f'Reutilizando VM administrada en Terraform ({instance[0]}).')
-    elif profile == 'always-free':
-        print('Configuración Always Free: VM.Standard.A1.Flex.')
-        return
-    else:
-        try:
-            instance = select_trial_instance(settings)
-        except oci.exceptions.ServiceError as error:
-            raise SystemExit(
-                f'OCI rechazó la consulta de Compute: HTTP {error.status} {error.code} '
-                f'({error.operation_name}). Request ID: {error.request_id}'
-            ) from None
-        print(f'VM seleccionada: {instance[0]} (1 OCPU, 2 GB, Ubuntu 24.04 AMD64).')
+    config = oci.config.from_file()
+    compute = oci.core.ComputeClient(config, timeout=(10, 30))
+    try:
+        instance = current_instance(compute)
+        if instance:
+            print(f'Reutilizando VM administrada en Terraform ({instance[0]}).')
+        elif profile == 'always-free':
+            print('Configuración Always Free: VM.Standard.A1.Flex.')
+            return
+        else:
+            instance = select_trial_instance(compute, config['tenancy'], settings)
+            print(f'VM seleccionada: {instance[0]} (1 OCPU, 2 GB, Ubuntu 24.04 AMD64).')
+    except oci.exceptions.ServiceError as error:
+        raise SystemExit(
+            f'OCI rechazó la consulta de Compute: HTTP {error.status} {error.code} '
+            f'({error.operation_name}). Request ID: {error.request_id}'
+        ) from None
 
     settings['instance_shape'], settings['ubuntu_image_id'] = instance
     path.write_text(json.dumps(settings), encoding='utf-8')
