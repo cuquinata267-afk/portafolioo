@@ -2,9 +2,9 @@
 from sqlalchemy import text
 from .main import Base, engine
 
-Base.metadata.create_all(engine)
-if engine.dialect.name == 'postgresql':
-    with engine.begin() as connection:
+with engine.begin() as connection:
+    Base.metadata.create_all(connection)
+    if engine.dialect.name == 'postgresql':
         for table in Base.metadata.sorted_tables:
             connection.execute(text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY'))
 print('Esquema inicial preparado.')
