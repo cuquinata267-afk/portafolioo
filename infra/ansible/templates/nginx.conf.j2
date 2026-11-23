@@ -1,4 +1,5 @@
 limit_req_zone $binary_remote_addr zone=contact:10m rate=5r/m;
+{% if domain %}
 server {
     listen 80;
     server_name {{ domain }};
@@ -10,6 +11,11 @@ server {
     ssl_certificate /etc/nginx/ssl/origin.pem;
     ssl_certificate_key /etc/nginx/ssl/origin.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+{% else %}
+server {
+    listen 80 default_server;
+    server_name _;
+{% endif %}
     client_max_body_size 32k;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;

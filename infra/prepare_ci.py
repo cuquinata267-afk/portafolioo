@@ -16,10 +16,14 @@ def write(path, content):
     path.write_text(content, encoding='utf-8')
     path.chmod(0o600)
 
-for name in ['DATABASE_URL', 'DOCKERHUB_USERNAME', 'PORTFOLIO_DOMAIN',
-             'CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_API_TOKEN',
-             'CLOUDFLARE_ORIGIN_CERT', 'CLOUDFLARE_ORIGIN_KEY']:
-    required(name)
+required('DOCKERHUB_USERNAME')
+domain = os.environ.get('PORTFOLIO_DOMAIN', '')
+if domain:
+    if domain != domain.strip():
+        raise SystemExit('PORTFOLIO_DOMAIN no debe contener espacios al inicio ni al final.')
+    for name in ['CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_API_TOKEN',
+                 'CLOUDFLARE_ORIGIN_CERT', 'CLOUDFLARE_ORIGIN_KEY']:
+        required(name)
 database_url = required('DATABASE_URL')
 if not database_url.startswith('postgresql+psycopg://') or any(c in database_url for c in "\n\r'"):
     raise SystemExit('DATABASE_URL requiere postgresql+psycopg y caracteres de contraseña codificados para URL.')

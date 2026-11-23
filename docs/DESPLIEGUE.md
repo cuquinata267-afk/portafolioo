@@ -3,7 +3,7 @@
 ## Qué está implementado
 
 - dev: pruebas unitarias, integración y E2E.
-- main: las mismas pruebas; imágenes web/API para AMD64 y ARM64 etiquetadas con el commit; Terraform; Ansible; comprobación HTTPS.
+- main: las mismas pruebas, imágenes web/API para AMD64 y ARM64 etiquetadas con el commit, Terraform, Ansible y comprobación HTTP o HTTPS según la configuración.
 - Terraform: VCN, subnet pública, gateway, rutas, reglas 22/80/443, VM Ubuntu con imagen configurable, A1 de 1 OCPU/6 GB/50 GB.
 - Ansible: Docker, Compose, Git, Nginx, iptables persistentes; migración inicial de tablas; despliegue con Supabase; certificados Origin; registro DNS de Cloudflare.
 - Estado remoto Terraform: backend OCI con bloqueo. El bucket se prepara una vez antes del pipeline.
@@ -20,9 +20,7 @@ Los archivos están preparados; aún no se han aplicado a una cuenta real. Revis
 5. Crear un API key OCI y guardar el archivo privado como secreto GitHub.
 6. Crear dos pares de claves ED25519: uno para acceso SSH del runner y otro para identidad SSH del servidor. Por ejemplo `ssh-keygen -t ed25519 -f portfolio_access` y `ssh-keygen -t ed25519 -f portfolio_host`. Para esta automatización se requieren claves sin passphrase, protegidas como secretos GitHub. No subirlas al repositorio.
 7. En Supabase obtener la conexión **Session pooler** IPv4 desde Connect. Usar `postgresql+psycopg://USUARIO:CONTRASEÑA_CODIFICADA@HOST:5432/postgres?sslmode=require`. Codificar los caracteres especiales de la contraseña. La cuenta debe poder crear tablas y habilitar RLS; nunca compartir esta conexión con el frontend. La primera migración habilita RLS sin políticas públicas. La cuenta propietaria del backend puede acceder; anon/authenticated no reciben políticas.
-8. En Cloudflare agregar un dominio que controles, activar su zona y generar un certificado Origin para el hostname del portafolio. Guardar certificado y clave privada. Configurar SSL/TLS **Full (strict)**. El certificado Origin es para tráfico Cloudflare→VM; el DNS se publica con proxy activado.
-9. Crear un API token Cloudflare limitado a DNS Edit en esa zona. Elegir un hostname libre; un CNAME previo con el mismo nombre debe resolverse antes de crear el registro A.
-10. Configurar variables y secretos en GitHub → Settings → Secrets and variables → Actions. Mantener DEPLOY_ENABLED sin definir hasta completar todo.
+8. Configurar variables y secretos en GitHub → Settings → Secrets and variables → Actions. Mantener `DEPLOY_ENABLED` sin definir hasta completar los valores de OCI, Docker Hub, SSH y Supabase.
 
 ## Variables GitHub
 
@@ -38,18 +36,24 @@ Los archivos están preparados; aún no se han aplicado a una cuenta real. Revis
 | OCI_NAMESPACE | Namespace Object Storage |
 | SSH_PUBLIC_KEY | Contenido de portfolio_access.pub |
 | SSH_HOST_PUBLIC_KEY | Contenido de portfolio_host.pub |
-| PORTFOLIO_DOMAIN | Hostname, sin https:// ni rutas |
-| CLOUDFLARE_ZONE_ID | ID de zona |
+| PORTFOLIO_DOMAIN | Opcional. Hostname sin `https://` ni rutas. Dejar sin definir para desplegar por IP. |
+| CLOUDFLARE_ZONE_ID | ID de zona. Requerido si se define `PORTFOLIO_DOMAIN`. |
 
 ## Secretos GitHub
 
-DOCKERHUB_TOKEN, OCI_API_KEY (PEM completo), OCI_USER_OCID, OCI_TENANCY_OCID, OCI_FINGERPRINT, SSH_PRIVATE_KEY (portfolio_access), SSH_HOST_PRIVATE_KEY (portfolio_host), DATABASE_URL, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ORIGIN_CERT, CLOUDFLARE_ORIGIN_KEY.
+Para ambos modos se requieren `DOCKERHUB_TOKEN`, `OCI_API_KEY` (PEM completo), `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT`, `SSH_PRIVATE_KEY` (`portfolio_access`), `SSH_HOST_PRIVATE_KEY` (`portfolio_host`) y `DATABASE_URL`.
+
+Si se define `PORTFOLIO_DOMAIN`, también se requieren `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ORIGIN_CERT` y `CLOUDFLARE_ORIGIN_KEY`.
 
 La clave host se configura mediante cloud-init y su pública se fija en known_hosts antes de Ansible. No se desactiva la comprobación de identidad SSH. La clave privada host queda en el estado Terraform y metadata de OCI: restringir el acceso al bucket y a la instancia.
 
 ## Ejecución y actualización
 
 Cada push a main ejecuta pruebas. Con DEPLOY_ENABLED=true, construye imágenes y despliega. Terraform aplica cambios sobre la misma infraestructura; prevent_destroy protege la VM de una sustitución accidental. La regla SSH en OCI permite únicamente la IP pública /32 del runner actual. Para acceso manual, un administrador deberá autorizar su IP y reconciliar después el cambio con Terraform.
+
+Para el primer despliegue por IP, deja `PORTFOLIO_DOMAIN` sin crear o vacío. En Actions abre **Publicar en OCI con Ansible → Run workflow**, elige `main` y ejecuta. El workflow comprueba la portada y `/api/health` y muestra el enlace `http://IP_PUBLICA` en el resumen. Usa datos ficticios si pruebas el formulario por HTTP.
+
+Para activar Cloudflare más adelante, agrega un dominio que controles y activa su zona. Configura SSL/TLS **Full (strict)** para el sitio y genera un certificado de origen que incluya el hostname elegido. Guarda su certificado y clave privada, un token limitado a DNS Edit de la zona y el ID de zona. Elige un hostname libre e introduce `PORTFOLIO_DOMAIN` al final. Vuelve a ejecutar el workflow con el mismo bucket y estado de Terraform. Ansible configurará Nginx para HTTPS y actualizará el registro `A` con proxy en Cloudflare.
 
 Ansible recibe secretos desde variables de entorno y usa no_log para las tareas sensibles. Sólo Nginx publica 80/443; los contenedores se alcanzan por 127.0.0.1:8080. Los mensajes tienen límite de tamaño y frecuencia en Nginx.
 

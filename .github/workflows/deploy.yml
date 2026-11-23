@@ -76,6 +76,7 @@ jobs:
       - run: terraform -chdir=infra/terraform plan -out=deploy.tfplan
       - run: terraform -chdir=infra/terraform apply -auto-approve deploy.tfplan
       - name: Preparar inventario y verificar identidad SSH
+        id: server
         shell: bash
         run: |
           IP=$(terraform -chdir=infra/terraform output -raw public_ip)
@@ -86,10 +87,29 @@ jobs:
           pathlib.Path('infra/ansible/inventory.ini').write_text('[portfolio]\n' + ip + ' ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/portfolio\n')
           pathlib.Path.home().joinpath('.ssh/known_hosts').write_text(ip + ' ' + os.environ['SSH_HOST_PUBLIC_KEY'].strip() + '\n')
           PY
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
       - run: pip install 'ansible-core>=2.17,<2.19'
       - run: ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml
-      - name: Verificar HTTPS público
-        run: curl --fail --retry 10 --retry-all-errors --retry-delay 15 "https://${PORTFOLIO_DOMAIN}/api/health"
+      - name: Verificar acceso público al portafolio
+        shell: bash
+        env:
+          SERVER_IP: ${{ steps.server.outputs.ip }}
+        run: |
+          if [[ -n "$PORTFOLIO_DOMAIN" ]]; then
+            url="https://${PORTFOLIO_DOMAIN}"
+          else
+            url="http://${SERVER_IP}"
+          fi
+          for path in / /api/health; do
+            status=$(curl --fail --silent --show-error --retry 10 --retry-all-errors \
+              --retry-delay 15 --max-time 20 --output /dev/null --write-out '%{http_code}' "$url$path")
+            if [[ "$status" != 200 ]]; then
+              printf 'Respuesta inesperada %s en %s\n' "$status" "$url$path" >&2
+              exit 1
+            fi
+          done
+          printf 'Portafolio disponible en %s\n' "$url"
+          printf '### Portafolio publicado\n\n[Abrir el portafolio](%s)\n' "$url" >> "$GITHUB_STEP_SUMMARY"
       - name: Borrar archivos temporales con secretos
         if: always()
         run: rm -f infra/terraform/ci.auto.tfvars.json infra/terraform/deploy.tfplan ~/.oci/key.pem ~/.ssh/portfolio

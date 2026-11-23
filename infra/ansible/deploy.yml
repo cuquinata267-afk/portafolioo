@@ -10,14 +10,14 @@
     - name: Esperar SSH
       ansible.builtin.wait_for_connection:
         timeout: 600
-    - name: Validar Ubuntu 24.04 y dominio
+    - name: Obtener información de Ubuntu
       ansible.builtin.setup:
     - name: Comprobar requisitos
       ansible.builtin.assert:
         that:
           - ansible_distribution == 'Ubuntu'
           - ansible_distribution_version == '24.04'
-          - domain is match('^[a-zA-Z0-9][a-zA-Z0-9.-]+[a-zA-Z0-9]$')
+          - not domain or domain is match('^[a-zA-Z0-9][a-zA-Z0-9.-]+[a-zA-Z0-9]$')
   tasks:
     - name: Esperar a cloud-init
       ansible.builtin.command: cloud-init status --wait
@@ -46,6 +46,7 @@
       loop:
         - {secret: CLOUDFLARE_ORIGIN_CERT, path: /etc/nginx/ssl/origin.pem}
         - {secret: CLOUDFLARE_ORIGIN_KEY, path: /etc/nginx/ssl/origin.key}
+      when: domain | length > 0
       no_log: true
       notify: Recargar nginx
     - name: Copiar Compose de producción
@@ -77,7 +78,7 @@
       args:
         chdir: /opt/portfolio
       changed_when: true
-    - name: Configurar proxy TLS
+    - name: Configurar proxy web
       ansible.builtin.template:
         src: nginx.conf.j2
         dest: /etc/nginx/sites-enabled/portfolio
@@ -126,6 +127,7 @@
         headers:
           Authorization: "Bearer {{ lookup('env', 'CLOUDFLARE_API_TOKEN') }}"
       register: dns
+      when: domain | length > 0
       delegate_to: localhost
       become: false
       no_log: true
@@ -139,18 +141,20 @@
         body:
           type: A
           name: "{{ domain }}"
-          content: "{{ ansible_host }}"
+          content: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
           ttl: 1
           proxied: true
+      when: domain | length > 0
       delegate_to: localhost
       become: false
       no_log: true
   handlers:
-    - name: Recargar nginx
+    - name: Validar configuración de nginx
+      listen: Recargar nginx
       ansible.builtin.command: nginx -t
       changed_when: false
-      notify: Reiniciar nginx
     - name: Reiniciar nginx
+      listen: Recargar nginx
       ansible.builtin.service:
         name: nginx
         enabled: true
