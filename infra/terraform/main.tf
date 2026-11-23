@@ -14,7 +14,11 @@ variable "compartment_id" { type = string }
 variable "availability_domain" { type = string }
 variable "ubuntu_image_id" {
   type = string
-  description = "OCID de imagen Ubuntu 24.04 ARM64 compatible con A1 en tu región."
+  description = "OCID regional de Ubuntu 24.04 compatible con la forma de la VM."
+}
+variable "instance_shape" {
+  type    = string
+  default = "VM.Standard.A1.Flex"
 }
 variable "ssh_public_key" { type = string }
 variable "ssh_host_private_key" {
@@ -80,7 +84,7 @@ resource "oci_core_instance" "web" {
   compartment_id = var.compartment_id
   availability_domain = var.availability_domain
   display_name = "natalia-portfolio"
-  shape = "VM.Standard.A1.Flex"
+  shape = var.instance_shape
   shape_config {
     ocpus = 1
     memory_in_gbs = 2

@@ -4,12 +4,12 @@
 
 - dev: pruebas unitarias, integración y E2E.
 - main: las mismas pruebas, imágenes web/API para AMD64 y ARM64 etiquetadas con el commit, Terraform, Ansible y comprobación HTTP o HTTPS según la configuración.
-- Terraform: VCN, subnet pública, gateway, rutas, reglas 22/80/443, VM Ubuntu con imagen configurable, A1 de 1 OCPU/2 GB/50 GB.
+- Terraform: VCN, subnet pública, gateway, rutas, reglas 22/80/443 y una VM Ubuntu 24.04 de 1 OCPU, 2 GB de RAM y 50 GB de disco.
 - Ansible: Docker, Compose, Git, Nginx, iptables persistentes; migración inicial de tablas; despliegue con Supabase; certificados Origin; registro DNS de Cloudflare.
 - Estado remoto Terraform: backend OCI con bloqueo. El bucket se prepara una vez antes del pipeline.
 - Producción usa Supabase externo. Compose local mantiene PostgreSQL para desarrollo y E2E.
 
-Los archivos están preparados; aún no se han aplicado a una cuenta real. Revisar la cuota disponible y la etiqueta Always Free de la imagen/shape en tu región. La capacidad A1 puede no estar disponible y no se cambia automáticamente a una opción de pago.
+El workflow consulta la capacidad de las formas E4 Flex, E5 Flex y Standard3 Flex para el perfil `trial`, que usa créditos de la prueba de OCI. Selecciona la primera con capacidad y una imagen Ubuntu 24.04 AMD64 compatible. El perfil `always-free` solicita A1 Flex con la imagen ARM64 configurada. Si Terraform ya administra la VM, el workflow reutiliza su forma e imagen.
 
 ## Preparación inicial
 
@@ -32,6 +32,7 @@ Los archivos están preparados; aún no se han aplicado a una cuenta real. Revis
 | OCI_COMPARTMENT_OCID | Compartment destino |
 | OCI_AVAILABILITY_DOMAIN | Nombre completo del availability domain |
 | OCI_UBUNTU_IMAGE_OCID | Ubuntu 24.04 ARM64 |
+| OCI_COMPUTE_PROFILE | `trial` por defecto. Define `always-free` para solicitar A1 cuando todavía no existe la VM. |
 | OCI_STATE_BUCKET | Nombre del bucket privado |
 | OCI_NAMESPACE | Namespace Object Storage |
 | SSH_PUBLIC_KEY | Contenido de portfolio_access.pub |
@@ -50,6 +51,8 @@ La clave host se configura mediante cloud-init y su pública se fija en known_ho
 ## Ejecución y actualización
 
 Cada push a main ejecuta pruebas. Con DEPLOY_ENABLED=true, construye imágenes y despliega. Terraform aplica cambios sobre la misma infraestructura; prevent_destroy protege la VM de una sustitución accidental. La regla SSH en OCI permite únicamente la IP pública /32 del runner actual. Para acceso manual, un administrador deberá autorizar su IP y reconciliar después el cambio con Terraform.
+
+El perfil `trial` requiere créditos vigentes y el permiso `COMPUTE_CAPACITY_REPORT_CREATE` en la tenancy para el usuario de la API. Si el paso de capacidad recibe `NotAuthorizedOrNotFound`, un administrador puede otorgar al grupo de ese usuario `manage compute-capacity-reports in tenancy`. Una consulta con capacidad no reserva una plaza y OCI puede reportar falta de capacidad en el lanzamiento. Al terminar la prueba, Oracle puede retirar la VM de pago.
 
 Para el primer despliegue por IP, deja `PORTFOLIO_DOMAIN` sin crear o vacío. En Actions abre **Publicar en OCI con Ansible → Run workflow**, elige `main` y ejecuta. El workflow comprueba la portada y `/api/health` y muestra el enlace `http://IP_PUBLICA` en el resumen. Usa datos ficticios si pruebas el formulario por HTTP.
 
